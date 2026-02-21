@@ -18,6 +18,27 @@ from datetime import date, timedelta
 import random
 
 # ---------------------------------------------------------------------------
+# openpyxl compatibility: Excel 365 dynamic-array functions must carry the
+# _xlfn._xlws. (or _xlfn.) prefix when written by openpyxl, otherwise Excel
+# treats them as unknown on open and strips them during repair.
+# ---------------------------------------------------------------------------
+_MODERN_FUNCS = {
+    # Dynamic-array worksheet functions
+    "FILTER(":   "_xlfn._xlws.FILTER(",
+    "SORTBY(":   "_xlfn._xlws.SORTBY(",
+    # Non-dynamic but post-2019 functions used here
+    "HSTACK(":   "_xlfn.HSTACK(",
+    "SEQUENCE(": "_xlfn.SEQUENCE(",
+}
+
+def _xl(formula: str) -> str:
+    """Rewrite a formula string so Excel 365 dynamic-array functions carry the
+    prefix that openpyxl requires for them to survive the xlsx save/open cycle."""
+    for plain, prefixed in _MODERN_FUNCS.items():
+        formula = formula.replace(plain, prefixed)
+    return formula
+
+# ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
@@ -787,7 +808,7 @@ def build_queue_all(wb):
         f'),"No jobs match")'
     )
 
-    ws["A8"].value = filter_formula
+    ws["A8"].value = _xl(filter_formula)
 
 
 # ---------------------------------------------------------------------------
@@ -907,7 +928,7 @@ def build_station_queues(wb):
             f'),"No jobs in queue")'
         )
 
-        ws["A8"].value = filter_formula
+        ws["A8"].value = _xl(filter_formula)
 
 
 # ---------------------------------------------------------------------------
