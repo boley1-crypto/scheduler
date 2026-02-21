@@ -23,12 +23,10 @@ import random
 # treats them as unknown on open and strips them during repair.
 # ---------------------------------------------------------------------------
 _MODERN_FUNCS = {
-    # Dynamic-array worksheet functions
+    # Dynamic-array worksheet functions — all need the _xlws namespace
     "FILTER(":   "_xlfn._xlws.FILTER(",
     "SORTBY(":   "_xlfn._xlws.SORTBY(",
-    # Non-dynamic but post-2019 functions used here
-    "HSTACK(":   "_xlfn.HSTACK(",
-    "SEQUENCE(": "_xlfn.SEQUENCE(",
+    "SEQUENCE(": "_xlfn._xlws.SEQUENCE(",
 }
 
 def _xl(formula: str) -> str:
@@ -763,52 +761,52 @@ def build_queue_all(wb):
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[col_letter(i)].width = w
 
-    # Build the FILTER formula
-    # We need to pull from tblJobs: Job ID, Customer, Product, Drawing, Priority, Overall Status, Due Date, Days Until Due, Notes
-    # Plus "Assigned Station" — most recent active station for a job.
-    # Since FILTER is a dynamic array formula, place in A8.
-    # Columns in Master Schedule:
-    job_id_col  = col_letter(ID_COLS["Job ID"])
-    cust_col    = col_letter(ID_COLS["Customer"])
-    prod_col    = col_letter(ID_COLS["Product/Description"])
-    draw_col    = col_letter(ID_COLS["Drawing Ref"])
-    prio_col    = col_letter(ID_COLS["Job Priority"])
-    stat_col    = col_letter(ID_COLS["Overall Status"])
+    # Per-column FILTER+SORTBY formulas starting at row 8.
+    # Each column independently filters and sorts with the same condition and sort
+    # keys, giving identical row ordering without requiring HSTACK (which has
+    # fragile prefix handling in openpyxl and is unavailable in older Excel 365).
+    job_id_col   = col_letter(ID_COLS["Job ID"])
+    cust_col     = col_letter(ID_COLS["Customer"])
+    prod_col     = col_letter(ID_COLS["Product/Description"])
+    draw_col     = col_letter(ID_COLS["Drawing Ref"])
+    prio_col     = col_letter(ID_COLS["Job Priority"])
+    stat_col     = col_letter(ID_COLS["Overall Status"])
     due_date_col = col_letter(ID_COLS["Order Due Date"])
-    days_col    = col_letter(ID_COLS["Days Until Due"])
-    rank_col    = col_letter(ID_COLS["Priority Rank"])
-    notes_col   = col_letter(ID_COLS["Notes"])
+    days_col     = col_letter(ID_COLS["Days Until Due"])
+    rank_col     = col_letter(ID_COLS["Priority Rank"])
+    notes_col    = col_letter(ID_COLS["Notes"])
 
-    # Assigned station: for simplicity use Overall Status (can't dynamically calc in formula without helper)
-    # We'll include a helper column on Config or just use the overall status column as proxy.
-    # The spec says "Assigned Station" = current active station. We'll approximate with a XLOOKUP/IF chain as a formula.
-    # For the FILTER formula, construct an HSTACK of columns:
-
-    filter_formula = (
-        f'=IFERROR('
-        f'SORTBY('
-        f'HSTACK('
-        f'SEQUENCE(ROWS(FILTER({ms}!${job_id_col}$6:${job_id_col}$500,({ms}!$A$6:$A$500<>"")*'
-        f'IF($B$4="All",1,ISNUMBER(SEARCH($B$4,{ms}!$A$6:$A$500)))*'  # WC filter placeholder
+    include_cond = (
+        f'({ms}!$A$6:$A$500<>"")*'
         f'IF($D$4="All",1,{ms}!${prio_col}$6:${prio_col}$500=$D$4)'
-        f'))),'
-        f'FILTER({ms}!${job_id_col}$6:${job_id_col}$500,({ms}!$A$6:$A$500<>"")*IF($D$4="All",1,{ms}!${prio_col}$6:${prio_col}$500=$D$4)),'
-        f'FILTER({ms}!${cust_col}$6:${cust_col}$500,({ms}!$A$6:$A$500<>"")*IF($D$4="All",1,{ms}!${prio_col}$6:${prio_col}$500=$D$4)),'
-        f'FILTER({ms}!${prod_col}$6:${prod_col}$500,({ms}!$A$6:$A$500<>"")*IF($D$4="All",1,{ms}!${prio_col}$6:${prio_col}$500=$D$4)),'
-        f'FILTER({ms}!${draw_col}$6:${draw_col}$500,({ms}!$A$6:$A$500<>"")*IF($D$4="All",1,{ms}!${prio_col}$6:${prio_col}$500=$D$4)),'
-        f'FILTER({ms}!${prio_col}$6:${prio_col}$500,({ms}!$A$6:$A$500<>"")*IF($D$4="All",1,{ms}!${prio_col}$6:${prio_col}$500=$D$4)),'
-        f'FILTER({ms}!${stat_col}$6:${stat_col}$500,({ms}!$A$6:$A$500<>"")*IF($D$4="All",1,{ms}!${prio_col}$6:${prio_col}$500=$D$4)),'
-        f'FILTER({ms}!${due_date_col}$6:${due_date_col}$500,({ms}!$A$6:$A$500<>"")*IF($D$4="All",1,{ms}!${prio_col}$6:${prio_col}$500=$D$4)),'
-        f'FILTER({ms}!${days_col}$6:${days_col}$500,({ms}!$A$6:$A$500<>"")*IF($D$4="All",1,{ms}!${prio_col}$6:${prio_col}$500=$D$4)),'
-        f'FILTER({ms}!${stat_col}$6:${stat_col}$500,({ms}!$A$6:$A$500<>"")*IF($D$4="All",1,{ms}!${prio_col}$6:${prio_col}$500=$D$4)),'
-        f'FILTER({ms}!${notes_col}$6:${notes_col}$500,({ms}!$A$6:$A$500<>"")*IF($D$4="All",1,{ms}!${prio_col}$6:${prio_col}$500=$D$4))'
-        f'),'
-        f'FILTER({ms}!${rank_col}$6:${rank_col}$500,({ms}!$A$6:$A$500<>"")*IF($D$4="All",1,{ms}!${prio_col}$6:${prio_col}$500=$D$4)),1,'
-        f'FILTER({ms}!${due_date_col}$6:${due_date_col}$500,({ms}!$A$6:$A$500<>"")*IF($D$4="All",1,{ms}!${prio_col}$6:${prio_col}$500=$D$4)),1'
-        f'),"No jobs match")'
     )
 
-    ws["A8"].value = _xl(filter_formula)
+    F  = "_xlfn._xlws.FILTER"
+    SB = "_xlfn._xlws.SORTBY"
+    SQ = "_xlfn._xlws.SEQUENCE"
+
+    def _sf(data_col, fallback='""'):
+        return (
+            f'=IFERROR({SB}('
+            f'{F}({ms}!${data_col}$6:${data_col}$500,{include_cond}),'
+            f'{F}({ms}!${rank_col}$6:${rank_col}$500,{include_cond}),1,'
+            f'{F}({ms}!${due_date_col}$6:${due_date_col}$500,{include_cond}),1'
+            f'),{fallback})'
+        )
+
+    ws["A8"].value = (
+        f'=IFERROR({SQ}(ROWS({F}({ms}!$A$6:$A$500,{include_cond}))),"")'
+    )
+    ws["B8"].value  = _sf(job_id_col)
+    ws["C8"].value  = _sf(cust_col)
+    ws["D8"].value  = _sf(prod_col)
+    ws["E8"].value  = _sf(draw_col)
+    ws["F8"].value  = _sf(prio_col)
+    ws["G8"].value  = _sf(stat_col)
+    ws["H8"].value  = _sf(due_date_col)
+    ws["I8"].value  = _sf(days_col)
+    ws["J8"].value  = _sf(stat_col)   # Assigned Station proxied by Overall Status
+    ws["K8"].value  = _sf(notes_col)
 
 
 # ---------------------------------------------------------------------------
@@ -891,14 +889,12 @@ def build_station_queues(wb):
         for i, w in enumerate(widths, start=1):
             ws.column_dimensions[col_letter(i)].width = w
 
-        # FILTER formula in A8 — show only jobs where this station status ≠ Not Started AND ≠ Complete
-        # unless status = Not Started and job has not yet reached this station
-        # Simplified: show all jobs with station status not "Not Started"
-        job_id_col_ms  = col_letter(ID_COLS["Job ID"])
-        cust_col_ms    = col_letter(ID_COLS["Customer"])
-        prod_col_ms    = col_letter(ID_COLS["Product/Description"])
-        draw_col_ms    = col_letter(ID_COLS["Drawing Ref"])
-        prio_col_ms    = col_letter(ID_COLS["Job Priority"])
+        # Per-column FILTER+SORTBY formulas in row 8 — no HSTACK required.
+        job_id_col_ms   = col_letter(ID_COLS["Job ID"])
+        cust_col_ms     = col_letter(ID_COLS["Customer"])
+        prod_col_ms     = col_letter(ID_COLS["Product/Description"])
+        draw_col_ms     = col_letter(ID_COLS["Drawing Ref"])
+        prio_col_ms     = col_letter(ID_COLS["Job Priority"])
         due_date_col_ms = col_letter(ID_COLS["Order Due Date"])
 
         include_cond = (
@@ -906,29 +902,33 @@ def build_station_queues(wb):
             f'({ms}!$A$6:$A$500<>"")'
         )
 
-        filter_formula = (
-            f'=IFERROR('
-            f'SORTBY('
-            f'HSTACK('
-            f'SEQUENCE(ROWS(FILTER({ms}!${job_id_col_ms}$6:${job_id_col_ms}$500,{include_cond}))),'
-            f'FILTER({ms}!${job_id_col_ms}$6:${job_id_col_ms}$500,{include_cond}),'
-            f'FILTER({ms}!${cust_col_ms}$6:${cust_col_ms}$500,{include_cond}),'
-            f'FILTER({ms}!${prod_col_ms}$6:${prod_col_ms}$500,{include_cond}),'
-            f'FILTER({ms}!${draw_col_ms}$6:${draw_col_ms}$500,{include_cond}),'
-            f'FILTER({ms}!${prio_col_ms}$6:${prio_col_ms}$500,{include_cond}),'
-            f'FILTER({ms}!${due_date_col_ms}$6:${due_date_col_ms}$500,{include_cond}),'
-            f'FILTER({ms}!${days_col_ms}$6:${days_col_ms}$500,{include_cond}),'
-            f'FILTER({ms}!${st_status_col}$6:${st_status_col}$500,{include_cond}),'
-            f'FILTER({ms}!${st_hrs_col}$6:${st_hrs_col}$500,{include_cond}),'
-            f'FILTER({ms}!${st_op_col}$6:${st_op_col}$500,{include_cond}),'
-            f'FILTER({ms}!${st_notes_col}$6:${st_notes_col}$500,{include_cond})'
-            f'),'
-            f'FILTER({ms}!${rank_col_ms}$6:${rank_col_ms}$500,{include_cond}),1,'
-            f'FILTER({ms}!${due_date_col_ms}$6:${due_date_col_ms}$500,{include_cond}),1'
-            f'),"No jobs in queue")'
-        )
+        F  = "_xlfn._xlws.FILTER"
+        SB = "_xlfn._xlws.SORTBY"
+        SQ = "_xlfn._xlws.SEQUENCE"
 
-        ws["A8"].value = _xl(filter_formula)
+        def _sf(data_col, fallback='""'):
+            return (
+                f'=IFERROR({SB}('
+                f'{F}({ms}!${data_col}$6:${data_col}$500,{include_cond}),'
+                f'{F}({ms}!${rank_col_ms}$6:${rank_col_ms}$500,{include_cond}),1,'
+                f'{F}({ms}!${due_date_col_ms}$6:${due_date_col_ms}$500,{include_cond}),1'
+                f'),{fallback})'
+            )
+
+        ws["A8"].value = (
+            f'=IFERROR({SQ}(ROWS({F}({ms}!$A$6:$A$500,{include_cond}))),"")'
+        )
+        ws["B8"].value = _sf(job_id_col_ms)
+        ws["C8"].value = _sf(cust_col_ms)
+        ws["D8"].value = _sf(prod_col_ms)
+        ws["E8"].value = _sf(draw_col_ms)
+        ws["F8"].value = _sf(prio_col_ms)
+        ws["G8"].value = _sf(due_date_col_ms)
+        ws["H8"].value = _sf(days_col_ms)
+        ws["I8"].value = _sf(st_status_col)
+        ws["J8"].value = _sf(st_hrs_col)
+        ws["K8"].value = _sf(st_op_col)
+        ws["L8"].value = _sf(st_notes_col)
 
 
 # ---------------------------------------------------------------------------
